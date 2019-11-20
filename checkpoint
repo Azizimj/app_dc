@@ -1,0 +1,2 @@
+model_checkpoint_path: "app_dc.ckpt"
+all_model_checkpoint_paths: "app_dc.ckpt"
