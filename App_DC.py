@@ -3,7 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import cv2
+import sys
 np.random.seed(110)
+
 
 # manual labeling
 DATASET_PATH = "./splitted-all" # the dataset file or root folder path.
@@ -21,9 +23,9 @@ def augmentation(image, gammas, rotations):
     '''
     input: image tensor
     return: a list of augmented images
-    
+
     By a bried look at the data and also the assumption that we are in a semi-controlled environment,
-    we just did flips, shifts and add light. 
+    we just did flips, shifts and add light.
     '''
     result = []
     angels = np.random.random(rotations)*50-25  # random -25, 25 degree rotate
@@ -43,13 +45,14 @@ def augmentation(image, gammas, rotations):
 
 def read_images(dataset_path):
     '''
-    input: str folder path 
+    input: str folder path
     output: train, validation and test data sets
     '''
     images, labels = list(), list()
     images_dir = list()
 
     classes = sorted(os.walk(dataset_path).__next__()[1])  # List the directory
+
 
     # grayscale or RGB
     if CHANNELS==1:
@@ -63,7 +66,7 @@ def read_images(dataset_path):
             label = 1
         elif c=="undefected":
             label= 0
-            
+
         c_dir = os.path.join(dataset_path, c)
         walk = os.walk(c_dir).__next__()
         # Add each image to the set
@@ -74,7 +77,7 @@ def read_images(dataset_path):
             images.append(image * 1.0 / 127.5 - 1.0)  # normalize
             images_dir.append(img_path)
             labels.append(label)
-            
+
             if label == 1:  # augmentation just on defected
                 res = augmentation(image, [.1, .4, .6, 1], 5)
                 images += res
@@ -85,14 +88,14 @@ def read_images(dataset_path):
 #                 images += res
 #                 images_dir += [img_path]*len(res)
 #                 labels += [label]*len(res)
-        
+
 
     # shuffle and split train, validation and test
     num_data = len(labels)
 #     np.random.seed(110) # set the seed
     idx = np.random.permutation(len(labels))
-    images, images_dir, labels = np.array(images)[idx,:], np.array(images_dir)[idx] , np.array(labels)[idx], 
-    
+    images, images_dir, labels = np.array(images)[idx,:], np.array(images_dir)[idx] , np.array(labels)[idx],
+
     num_training = int(num_data * .8)
     num_eval = int(num_data * .1)
 
@@ -122,9 +125,8 @@ if CHANNELS == 1:
     X_train = np.expand_dims(X_train, axis=-1)
     X_val = np.expand_dims(X_val, axis=-1)
     X_test = np.expand_dims(X_test, axis=-1)
-    
-    
-    
+
+
 # # definec some wrappers with almost tunned parameters
 def conv2d(input, kernel_size, stride, num_filter):
     stride_shape = [1, stride, stride, 1]
@@ -140,34 +142,39 @@ def max_pool(input, kernel_size, stride):
     return tf.nn.max_pool(input, ksize=ksize, strides=strides, padding='SAME')
 
 
-num_filter_1 = 100
-num_filter_2 = 300
-num_filter_3 = 400
+# num_filter_1 = 100
+# num_filter_2 = 300
+# num_filter_3 = 400
 class BaseModel(object):
     def __init__(self):
         self.batch_size = 19
-        self.num_epoch = 10
+        # self.num_epoch = 1 if len(sys.argv)<2 else int(sys.argv[2])
+        self.num_epoch = 5
+        print("num epoch ", self.num_epoch)
         self.log_step = 5
-        self._build_model()
+        self.decay_rate = 0.9
+        self.num_filter_1 = 32
+        self.num_filter_2 = 20
+        self.num_filter_3 = 30
 
     def _model(self):
         with tf.variable_scope('conv1'):
-            self.conv1 = conv2d(self.X, 7, 1, num_filter_1)
+            self.conv1 = conv2d(self.X, 7, 1, self.num_filter_1)
             self.relu1 = tf.nn.relu(self.conv1)
             self.pool1 = max_pool(self.relu1, 5, 2)
             self.bn1 = tf.layers.batch_normalization(self.pool1, training=self.is_training)
         with tf.variable_scope('conv2'):
-            self.conv2 = conv2d(self.bn1, 5, 1, num_filter_2)
+            self.conv2 = conv2d(self.bn1, 5, 1, self.num_filter_2)
             self.relu2 = tf.nn.relu(self.conv2)
             self.pool2 = max_pool(self.relu2, 3, 2)
             self.bn2 = tf.layers.batch_normalization(self.pool2, training=self.is_training)
         with tf.variable_scope('conv3'):
-            self.conv3 = conv2d(self.bn2, 5, 1, num_filter_3)
+            self.conv3 = conv2d(self.bn2, 5, 1, self.num_filter_3)
             self.relu3 = tf.nn.relu(self.conv3)
             self.pool3 = max_pool(self.relu3, 3, 2)
             self.bn3 = tf.layers.batch_normalization(self.pool3, training=self.is_training)
         self.flat = tf.layers.flatten(self.bn3)
-        
+
         with tf.variable_scope('fc1'):
             self.fc1 = tf.layers.dense(self.flat, 384)
             self.fc1 = tf.nn.dropout(x=self.fc1, keep_prob=self.keep_prob)
@@ -187,12 +194,13 @@ class BaseModel(object):
         self.is_training = tf.placeholder(tf.bool, None)
         self.lr = tf.placeholder(tf.float32, None)
         self.keep_prob = tf.placeholder(tf.float32 , None)
-        
+        # self.num_filter_1 = tf.placeholder(tf.int64, None)
+
 
     def _build_optimizer(self):
         # Adam optimizer 'self.train_op' that minimizes 'self.loss_op'
         gs = tf.Variable(0, trainable=False)
-        l_r = tf.train.exponential_decay(learning_rate=self.lr, global_step=gs,decay_steps=10, decay_rate=0.9, staircase=True)
+        l_r = tf.train.exponential_decay(learning_rate=self.lr, global_step=gs,decay_steps=10, decay_rate=self.decay_rate, staircase=True)
         optimer = tf.train.AdamOptimizer(l_r)
         self.train_op = optimer.minimize(self.loss_op, global_step=gs)
 
@@ -221,6 +229,7 @@ class BaseModel(object):
         self.f1_score = 2 * precision * recall / (precision + recall)
 
     def train(self, sess, X_train, Y_train, X_val, Y_val, lr):
+        # self._build_model()
         sess.run(tf.global_variables_initializer())
         step = 0
         losses = []
@@ -235,7 +244,7 @@ class BaseModel(object):
 
                 feed_dict = {self.X: X_, self.Y: Y_, self.lr:lr, self.is_training : True, self.keep_prob: .7}
                 fetches = [self.train_op, self.loss_op, self.accuracy_op]
-                # import IPython  # used for online debugging (we cannot do this using something like Pycharm, useful note for me) 
+                # import IPython  # used for online debugging (we cannot do this using something like Pycharm, useful note for me)
                 # IPython.embed()
 
                 _, loss, accuracy = sess.run(fetches, feed_dict=feed_dict)
@@ -261,7 +270,7 @@ class BaseModel(object):
 #         acc_hist_ = accuracies[1::len(accuracies)//20]
 #         plt.plot(loss_hist_, '-o')
 #         plt.plot(accuracies*100, '-s')
-    
+
 #         plt.xlabel('epoch')
 #         plt.gcf().set_size_inches(15, 12)
 #         plt.show()
@@ -281,7 +290,7 @@ class BaseModel(object):
             eval_f1 += f1
             eval_iter += 1
             predicts += list(preds)
-            
+
         X_ = X_eval[(i+1) * self.batch_size:][:]
         Y_ = Y_eval[(i+1) * self.batch_size:]
         feed_dict = {self.X: X_, self.Y: Y_,  self.is_training : False, self.keep_prob: 1}
@@ -290,31 +299,119 @@ class BaseModel(object):
         eval_f1 += f1
         eval_iter += 1
         predicts += list(preds)
-        
+
         return eval_accuracy / eval_iter, eval_f1/ eval_iter, predicts
-        
+
     def _predict(self, sess, X):
         feed_dict = {self.X: X, self.is_training : False, self.keep_prob: 1}
         pred = sess.run([self.predict], feed_dict=feed_dict)
         return pred
-        
-            
-tf.reset_default_graph()
 
-with tf.Session() as sess:
-    with tf.device('/cpu:0'):
+
+def train_once(config):
+    tf.reset_default_graph()
+    with tf.Session() as sess:
+        print(config)
+        # with tf.device('/cpu:0'):
         model = BaseModel()
-        lr = 1e-4
+        model.batch_size = 8 + config["bs"]
+        lr = config["lr"]
+        model.decay_rate = config["decay_rate"]
+        model.num_filter_1 = 50+config["num_filter_1"]
+        model.num_filter_2 = 100 + config["num_filter_2"]
+        model.num_filter_3 = 150 + config["num_filter_2"]
+
+        model._build_model()
+        # accuracy = 10*model.batch_size
         losses, accuracies, val_accuracies = model.train(sess, X_train, Y_train, X_val, Y_val, lr)
+        print(model.conv1)
         accuracy, f1, preds = model.evaluate(sess, X_test, Y_test)
-        
-#         pred = model._predict(sess, image)
-#         print("pred", pred)
-        
+
+
+        # pred = model._predict(sess, image)
+        # print("pred", pred)
+
         print('***** test accuracy: %.3f, f1: %.3f' % (accuracy, f1))
         print("preds", preds)
         print("Y_test", Y_test)
-        
+
         saver = tf.train.Saver()
-        model_path = saver.save(sess, "./app_dc.ckpt")
+        model_name_save = "./app_dc" + str(accuracy) + "_" + str(f1) + "_" + str(config["num_filter_1"]) + ".ckpt"
+        model_path = saver.save(sess, model_name_save)
         print("Model saved in %s" % model_path)
+
+        # for tune
+        for acc in accuracies:
+            tune.track.log(mean_accuracy=acc)
+        # for hyperopt
+        # print(-accuracy)
+        # return -accuracy
+
+# just hyperopt
+# from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
+# space = {
+#     "lr": hp.loguniform("lr", 1e-8, 1e-2),
+#     "bs": hp.randint("bs", 10),
+#     "decay_rate": hp.uniform("decay_rate", 0.7, 0.95),
+#     "num_filter_1": hp.randint("num_filter_1", 100)
+# }
+#
+# trials = Trials()
+# best = fmin(train_once,
+#     space=space,
+#     algo=tpe.suggest,
+#     max_evals=10,
+#     trials=trials)
+#
+# print(best)
+# print(trials.losses())
+
+
+# test on pc
+# config = {
+#     "lr": 1e-2,
+#     "bs":  10,
+#     "decay_rate": 0.7,
+#     "num_filter_1": 100,
+#     "num_filter_2": 100,
+#     "num_filter_3": 100
+# }
+# train_once(config)
+# exit()
+
+#
+from hyperopt import hp
+from ray.tune.suggest.hyperopt import HyperOptSearch
+from ray import tune # not supported for windows
+
+space = {
+    "lr": hp.loguniform("lr", 1e-8, 1e-2),
+    "bs": hp.randint("bs", 10),
+    "decay_rate": hp.uniform("decay_rate", 0.7, 0.95),
+    "num_filter_1": hp.randint("num_filter_1", 100),
+    "num_filter_2": hp.randint("num_filter_2", 100),
+    "num_filter_3": hp.randint("num_filter_3", 100)
+}
+
+
+hyperopt_search = HyperOptSearch(
+    space, max_concurrent=2, reward_attr="mean_accuracy")
+
+
+analysis = tune.run(
+    train_once,
+    num_samples=30,
+    search_alg=hyperopt_search)
+
+dfs = analysis.trial_dataframes
+print("dfs", dfs, "\n")
+
+# Plot by epoch
+ax = None  # This plots everything on the same plot
+for d in dfs.values():
+    ax = d.mean_accuracy.plot(ax=ax, legend=False)
+# ax.legend()
+ax.set_xlabel("training iters")
+ax.set_ylabel("Validation Acc")
+fig = ax.get_figure()
+fig.savefig("./plot.pdf")
